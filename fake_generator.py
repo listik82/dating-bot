@@ -1,6 +1,7 @@
 import random
 import datetime
 import database as db
+from locales import get_text
 
 # === 6 ЖЕНСКИХ ИМЁН ===
 FEMALE_NAMES = [
@@ -47,7 +48,7 @@ MALE_BIOS = [
     "Верю в настоящую любовь. Ищу ту, кто ценит семейные традиции.",
 ]
 
-# === ГОРОДА ===
+# === ГОРОДА (топ-3) ===
 CITIES = [
     "Toshkent", "Namangan", "Samarqand"
 ]
@@ -64,6 +65,7 @@ INTERESTS_LIST = [
     "Tabiat", "Hayvonlar", "Avtomobillar", "O'yinlar", "Biznes", "Fitnes"
 ]
 
+
 def random_last_active():
     """Генерирует случайную дату последней активности"""
     now = datetime.datetime.now()
@@ -71,18 +73,30 @@ def random_last_active():
     return now - datetime.timedelta(hours=delta)
 
 
-def get_online_status(last_active: datetime.datetime) -> str:
-    """Возвращает статус онлайн на основе last_active."""
-    if last_active is None:
-        return "offline"
+def get_online_status(last_active, lang="ru"):
+    """Возвращает локализованный статус онлайн на основе last_active."""
+    if last_active is None or last_active == "":
+        return get_text("days_ago", lang, d="?")
+
     now = datetime.datetime.now()
+    if isinstance(last_active, str):
+        try:
+            last_active = datetime.datetime.fromisoformat(last_active)
+        except Exception:
+            return get_text("days_ago", lang, d="?")
+
     delta = now - last_active
+
     if delta < datetime.timedelta(minutes=5):
-        return "online"
+        return get_text("online", lang)
     elif delta < datetime.timedelta(hours=1):
-        return "recently"
+        return get_text("recently", lang)
+    elif delta.days == 0:
+        return get_text("today", lang)
+    elif delta.days == 1:
+        return get_text("yesterday", lang)
     else:
-        return "offline"
+        return get_text("days_ago", lang, d=delta.days)
 
 
 async def generate_fake_profiles(bot, count: int = 50):
