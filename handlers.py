@@ -508,8 +508,13 @@ async def reg_bio(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("interest_"), Register.interests)
 async def cb_interest(callback: CallbackQuery, state: FSMContext):
     lang = db.get_lang(callback.from_user.id)
+
+    # Сразу убираем "часики" — Telegram больше не ждёт ответа
+    await callback.answer()
+
     data = await state.get_data()
-    selected = data.get("selected_interests", set())
+    # ВАЖНО: Redis хранит list, не set! Преобразуем обратно в set
+    selected = set(data.get("selected_interests", []))
     idx = int(callback.data.split("_")[1])
     items = INTERESTS.get(lang, INTERESTS["ru"])
     item = items[idx]
@@ -519,16 +524,20 @@ async def cb_interest(callback: CallbackQuery, state: FSMContext):
     else:
         selected.add(item)
 
-    await state.update_data(selected_interests=selected)
-    await callback.message.edit_reply_markup(reply_markup=interests_kb(lang, selected))
-    await callback.answer()
+    # ВАЖНО: сохраняем как list, иначе Redis упадёт с ошибкой сериализации
+    await state.update_data(selected_interests=list(selected))
+
+    try:
+        await callback.message.edit_reply_markup(reply_markup=interests_kb(lang, selected))
+    except Exception as e:
+        logging.error(f"Ошибка при обновлении клавиатуры интересов: {e}")
 
 
 @router.callback_query(F.data == "interests_done", Register.interests)
 async def cb_interests_done(callback: CallbackQuery, state: FSMContext):
     lang = db.get_lang(callback.from_user.id)
     data = await state.get_data()
-    selected = data.get("selected_interests", set())
+    selected = set(data.get("selected_interests", []))
     interests_str = ", ".join(selected) if selected else ""
     await state.update_data(interests=interests_str)
     await callback.message.edit_text(get_text("reg_photo", lang) + "\n\n💡 Можно отправить несколько фото. Когда закончите, нажмите «Готово».")
