@@ -79,6 +79,20 @@ def random_last_active():
     return now - datetime.timedelta(hours=delta)
 
 
+def get_online_status(last_active: datetime.datetime) -> str:
+    """Возвращает статус онлайн на основе last_active."""
+    if last_active is None:
+        return "offline"
+    now = datetime.datetime.now()
+    delta = now - last_active
+    if delta < datetime.timedelta(minutes=5):
+        return "online"
+    elif delta < datetime.timedelta(hours=1):
+        return "recently"
+    else:
+        return "offline"
+
+
 async def generate_fake_profiles(bot, count: int = 50):
     """Создаёт ровно 12 фейков: 6 женских + 6 мужских"""
     generated = 0
