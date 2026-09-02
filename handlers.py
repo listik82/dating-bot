@@ -1,6 +1,6 @@
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, ContentType, FSInputFile
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import aiohttp
@@ -1137,7 +1137,7 @@ async def header_button_ignore(message: Message):
 
 
 # === АДМИН КОМАНДЫ ===
-@router.message(Command("genfakes"), state="*")
+@router.message(Command("genfakes"), StateFilter("*"))
 async def cmd_genfakes(message: Message, bot: Bot):
     if message.from_user.id != ADMIN_ID:
         lang = db.get_lang(message.from_user.id)
@@ -1158,7 +1158,7 @@ async def cmd_genfakes(message: Message, bot: Bot):
 
     await message.answer(text)
 
-@router.message(Command("stats"), Command("status"), state="*")
+@router.message(Command("stats"), Command("status"), StateFilter("*"))
 async def cmd_stats(message: Message):
     if message.from_user.id != ADMIN_ID:
         lang = db.get_lang(message.from_user.id)
@@ -1167,7 +1167,7 @@ async def cmd_stats(message: Message):
     stats = db.get_stats()
     await message.answer(get_text("stats", "ru", real=stats["real"], fake=stats["fake"], matches=stats["matches"]))
 
-@router.message(Command("checkvolume"), state="*")
+@router.message(Command("checkvolume"), StateFilter("*"))
 async def cmd_checkvolume(message: Message):
     if message.from_user.id != ADMIN_ID:
         lang = db.get_lang(message.from_user.id)
@@ -1186,7 +1186,7 @@ async def cmd_checkvolume(message: Message):
         text = "❌ Папка /app/sessions не найдена. Volume не подключён?"
     await message.answer(text, parse_mode="HTML")
 
-@router.message(Command("getsession"), state="*")
+@router.message(Command("getsession"), StateFilter("*"))
 async def cmd_getsession(message: Message):
     if message.from_user.id != ADMIN_ID:
         lang = db.get_lang(message.from_user.id)
@@ -1210,7 +1210,7 @@ async def cmd_getsession(message: Message):
             parse_mode="HTML"
         )
 
-@router.message(Command("delfakes"), state="*")
+@router.message(Command("delfakes"), StateFilter("*"))
 async def cmd_delfakes(message: Message):
     if message.from_user.id != ADMIN_ID:
         lang = db.get_lang(message.from_user.id)
@@ -1227,7 +1227,7 @@ async def cmd_delfakes(message: Message):
 
 
 # === РЕДАКТИРОВАНИЕ ФЕЙКОВ ===
-@router.message(Command("editfake"), state="*")
+@router.message(Command("editfake"), StateFilter("*"))
 async def cmd_editfake(message: Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
         lang = db.get_lang(message.from_user.id)
