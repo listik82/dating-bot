@@ -49,21 +49,13 @@ MALE_BIOS = [
 
 # === ГОРОДА ===
 CITIES = [
-    "Toshkent", "Namangan", "Samarqand", "Andijon", "Nukus",
-    "Farg'ona", "Buxoro", "Qo'qon", "Qarshi", "Marg'ilon"
+    "Toshkent", "Namangan", "Samarqand"
 ]
 
 CITIES_COORDS = {
     "Toshkent": (41.2995, 69.2401),
     "Namangan": (40.9983, 71.6726),
     "Samarqand": (39.6270, 66.9750),
-    "Andijon": (40.7829, 72.3442),
-    "Nukus": (42.4602, 59.6176),
-    "Farg'ona": (40.3734, 71.7978),
-    "Buxoro": (39.7681, 64.4556),
-    "Qo'qon": (40.5289, 70.9425),
-    "Qarshi": (38.8606, 65.7896),
-    "Marg'ilon": (40.4711, 71.7247),
 }
 
 INTERESTS_LIST = [
@@ -77,20 +69,6 @@ def random_last_active():
     now = datetime.datetime.now()
     delta = random.randint(0, 72)
     return now - datetime.timedelta(hours=delta)
-
-
-def get_online_status(last_active: datetime.datetime) -> str:
-    """Возвращает статус онлайн на основе last_active."""
-    if last_active is None:
-        return "offline"
-    now = datetime.datetime.now()
-    delta = now - last_active
-    if delta < datetime.timedelta(minutes=5):
-        return "online"
-    elif delta < datetime.timedelta(hours=1):
-        return "recently"
-    else:
-        return "offline"
 
 
 async def generate_fake_profiles(bot, count: int = 50):
