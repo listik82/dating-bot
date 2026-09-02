@@ -1158,7 +1158,7 @@ async def cmd_genfakes(message: Message, bot: Bot):
 
     await message.answer(text)
 
-@router.message(Command("stats"), Command("status"), StateFilter("*"))
+@router.message(Command("stats", "status"), StateFilter("*"))
 async def cmd_stats(message: Message):
     if message.from_user.id != ADMIN_ID:
         lang = db.get_lang(message.from_user.id)
