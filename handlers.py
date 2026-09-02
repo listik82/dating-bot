@@ -508,13 +508,8 @@ async def reg_bio(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("interest_"), Register.interests)
 async def cb_interest(callback: CallbackQuery, state: FSMContext):
     lang = db.get_lang(callback.from_user.id)
-
-    # Сразу убираем "часики" — Telegram больше не ждёт ответа
-    await callback.answer()
-
     data = await state.get_data()
-    # ВАЖНО: Redis хранит list, не set! Преобразуем обратно в set
-    selected = set(data.get("selected_interests", []))
+    selected = data.get("selected_interests", set())
     idx = int(callback.data.split("_")[1])
     items = INTERESTS.get(lang, INTERESTS["ru"])
     item = items[idx]
@@ -524,23 +519,19 @@ async def cb_interest(callback: CallbackQuery, state: FSMContext):
     else:
         selected.add(item)
 
-    # ВАЖНО: сохраняем как list, иначе Redis упадёт с ошибкой сериализации
-    await state.update_data(selected_interests=list(selected))
-
-    try:
-        await callback.message.edit_reply_markup(reply_markup=interests_kb(lang, selected))
-    except Exception as e:
-        logging.error(f"Ошибка при обновлении клавиатуры интересов: {e}")
+    await state.update_data(selected_interests=selected)
+    await callback.message.edit_reply_markup(reply_markup=interests_kb(lang, selected))
+    await callback.answer()
 
 
 @router.callback_query(F.data == "interests_done", Register.interests)
 async def cb_interests_done(callback: CallbackQuery, state: FSMContext):
     lang = db.get_lang(callback.from_user.id)
     data = await state.get_data()
-    selected = set(data.get("selected_interests", []))
+    selected = data.get("selected_interests", set())
     interests_str = ", ".join(selected) if selected else ""
     await state.update_data(interests=interests_str)
-    await callback.message.edit_text(get_text("reg_photo", lang) + "\n\n💡 Можно отправить несколько фото. Когда закончите, нажмите «Готово».")
+    await callback.message.edit_text(get_text("reg_photo_hint", lang))
     await state.set_state(Register.photo)
     await callback.answer()
 
@@ -898,7 +889,7 @@ async def msg_start_verify(message: Message, state: FSMContext):
     )
 
 
-@router.message(F.content_type == ContentType.CONTACT, VerifyStates.waiting_for_phone)
+@router.message(F.content_type == ContentType.CONTACT, VerifyStates.waiting_for_phone, ~F.text.startswith("/"))
 async def process_contact(message: Message, state: FSMContext):
     lang = db.get_lang(message.from_user.id)
 
@@ -910,7 +901,7 @@ async def process_contact(message: Message, state: FSMContext):
     await start_telethon_verification(message, state, phone_number, lang)
 
 
-@router.message(VerifyStates.waiting_for_phone, F.text)
+@router.message(VerifyStates.waiting_for_phone, F.text, ~F.text.startswith("/"))
 async def process_phone_text(message: Message, state: FSMContext):
     """Обработка ручного ввода номера телефона — только Узбекистан (+998)"""
     lang = db.get_lang(message.from_user.id)
@@ -1146,7 +1137,7 @@ async def header_button_ignore(message: Message):
 
 
 # === АДМИН КОМАНДЫ ===
-@router.message(Command("genfakes"))
+@router.message(Command("genfakes"), state="*")
 async def cmd_genfakes(message: Message, bot: Bot):
     if message.from_user.id != ADMIN_ID:
         lang = db.get_lang(message.from_user.id)
@@ -1167,7 +1158,7 @@ async def cmd_genfakes(message: Message, bot: Bot):
 
     await message.answer(text)
 
-@router.message(Command("stats"))
+@router.message(Command("stats"), Command("status"), state="*")
 async def cmd_stats(message: Message):
     if message.from_user.id != ADMIN_ID:
         lang = db.get_lang(message.from_user.id)
@@ -1176,7 +1167,7 @@ async def cmd_stats(message: Message):
     stats = db.get_stats()
     await message.answer(get_text("stats", "ru", real=stats["real"], fake=stats["fake"], matches=stats["matches"]))
 
-@router.message(Command("checkvolume"))
+@router.message(Command("checkvolume"), state="*")
 async def cmd_checkvolume(message: Message):
     if message.from_user.id != ADMIN_ID:
         lang = db.get_lang(message.from_user.id)
@@ -1195,7 +1186,7 @@ async def cmd_checkvolume(message: Message):
         text = "❌ Папка /app/sessions не найдена. Volume не подключён?"
     await message.answer(text, parse_mode="HTML")
 
-@router.message(Command("getsession"))
+@router.message(Command("getsession"), state="*")
 async def cmd_getsession(message: Message):
     if message.from_user.id != ADMIN_ID:
         lang = db.get_lang(message.from_user.id)
@@ -1219,7 +1210,7 @@ async def cmd_getsession(message: Message):
             parse_mode="HTML"
         )
 
-@router.message(Command("delfakes"))
+@router.message(Command("delfakes"), state="*")
 async def cmd_delfakes(message: Message):
     if message.from_user.id != ADMIN_ID:
         lang = db.get_lang(message.from_user.id)
@@ -1236,7 +1227,7 @@ async def cmd_delfakes(message: Message):
 
 
 # === РЕДАКТИРОВАНИЕ ФЕЙКОВ ===
-@router.message(Command("editfake"))
+@router.message(Command("editfake"), state="*")
 async def cmd_editfake(message: Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
         lang = db.get_lang(message.from_user.id)
