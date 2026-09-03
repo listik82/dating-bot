@@ -1299,7 +1299,7 @@ async def cb_fake_field(callback: CallbackQuery, state: FSMContext):
         "city": get_text("fake_edit_city", "ru"),
         "bio": get_text("fake_edit_bio", "ru"),
         "interests": get_text("interests", "ru") + " (через запятую):",
-        "photo": "📸 Отправьте фото напрямую или прямые ссылки через запятую/пробел. Пример: https://files.catbox.moe/abc.jpg https://files.catbox.moe/xyz.jpg",
+        "photo": "📸 Отправьте фото напрямую (можно несколько сразу) или прямые ссылки через запятую/пробел. Пример: https://files.catbox.moe/abc.jpg https://files.catbox.moe/xyz.jpg",
     }
 
     try:
@@ -1307,8 +1307,49 @@ async def cb_fake_field(callback: CallbackQuery, state: FSMContext):
     except:
         pass
 
-    await callback.message.answer(field_prompts.get(field, get_text("enter_value", "ru")))
+    if field == "photo":
+        # Для фото добавляем кнопку "Готово"
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Готово", callback_data=f"fakephotodone_{fake_id}")]
+        ])
+        await callback.message.answer(field_prompts[field], reply_markup=kb)
+    else:
+        await callback.message.answer(field_prompts.get(field, get_text("enter_value", "ru")))
     await state.set_state(EditFake.value)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("fakephotodone_"))
+async def cb_fake_photo_done(callback: CallbackQuery, state: FSMContext):
+    """Кнопка Готово после загрузки фото альбомом."""
+    fake_id = int(callback.data.split("_")[1])
+    fake = db.get_profile(fake_id)
+
+    await state.clear()
+    await callback.message.delete()
+
+    if fake:
+        photos = fake.get("photos", [])
+        count = len(photos)
+        await callback.message.answer(f"✅ Фото обновлено: {count} шт.")
+
+        if photos:
+            for i, p in enumerate(photos):
+                try:
+                    if i == 0:
+                        await callback.message.answer_photo(photo=p, caption=format_card(fake, "ru"))
+                    else:
+                        await callback.message.answer_photo(photo=p)
+                except Exception as e:
+                    logging.error(f"Ошибка отправки фото {p}: {e}")
+                    if i == 0:
+                        await callback.message.answer(format_card(fake, "ru"))
+        else:
+            await callback.message.answer(format_card(fake, "ru"))
+    else:
+        await callback.message.answer(get_text("fake_not_found", "ru"))
+
     await callback.answer()
 
 
@@ -1335,7 +1376,8 @@ def extract_image_urls(text: str) -> list:
 
 @router.message(EditFake.value, F.photo)
 async def fake_value_photo(message: Message, state: FSMContext):
-    """Обработка фото, отправленных напрямую при редактировании фейка."""
+    """Обработка фото, отправленных напрямую при редактировании фейка.
+    Поддержка альбомов: несколько фото отправляются одним сообщением-альбомом."""
     data = await state.get_data()
     fake_id = data.get("edit_fake_id")
     field = data.get("edit_field")
@@ -1345,25 +1387,43 @@ async def fake_value_photo(message: Message, state: FSMContext):
         return await message.answer(get_text("editfake_error", "ru"))
 
     photo_id = message.photo[-1].file_id
+    mg_id = message.media_group_id
 
-    # Удаляем старые фото и добавляем новое (замена, а не добавление)
-    db.delete_photos(fake_id)
-    db.add_photo(fake_id, photo_id, 0)
+    if mg_id:
+        # Альбом (несколько фото) — удаляем старые только при первом фото альбома
+        last_mg = data.get("last_media_group")
+        if last_mg != mg_id:
+            db.delete_photos(fake_id)
+            await state.update_data(last_media_group=mg_id)
+        # Добавляем фото к существующим
+        current_count = len(db.get_photos(fake_id))
+        db.add_photo(fake_id, photo_id, current_count)
+        # Не очищаем state — ждём остальные фото альбома
+        return  # Тихо принимаем, без лишних сообщений
+    else:
+        # Одно фото — полная замена
+        db.delete_photos(fake_id)
+        db.add_photo(fake_id, photo_id, 0)
+        await state.clear()
+        await message.answer("✅ Фото обновлено.")
 
-    await state.clear()
-    await message.answer("✅ Фото обновлено.")
-
+    # Показываем обновлённую анкету
     fake = db.get_profile(fake_id)
     if fake:
         photos = fake.get("photos", [])
-        for i, p in enumerate(photos):
-            try:
-                if i == 0:
-                    await message.answer_photo(photo=p, caption=format_card(fake, "ru"))
-                else:
-                    await message.answer_photo(photo=p)
-            except Exception as e:
-                logging.error(f"Ошибка отправки фото {p}: {e}")
+        if photos:
+            for i, p in enumerate(photos):
+                try:
+                    if i == 0:
+                        await message.answer_photo(photo=p, caption=format_card(fake, "ru"))
+                    else:
+                        await message.answer_photo(photo=p)
+                except Exception as e:
+                    logging.error(f"Ошибка отправки фото {p}: {e}")
+                    if i == 0:
+                        await message.answer(format_card(fake, "ru"))
+        else:
+            await message.answer(format_card(fake, "ru"))
 
 
 @router.message(EditFake.value)
