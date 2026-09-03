@@ -1294,7 +1294,7 @@ async def cb_fake_field(callback: CallbackQuery, state: FSMContext):
         "city": get_text("fake_edit_city", "ru"),
         "bio": get_text("fake_edit_bio", "ru"),
         "interests": get_text("interests", "ru") + " (через запятую):",
-        "photo": get_text("fake_edit_photo", "ru"),
+        "photo": "📸 Отправьте фото напрямую или прямые ссылки через запятую/пробел. Пример: https://files.catbox.moe/abc.jpg https://files.catbox.moe/xyz.jpg",
     }
 
     try:
@@ -1309,62 +1309,55 @@ async def cb_fake_field(callback: CallbackQuery, state: FSMContext):
 
 
 # === ПАРСИНГ ФОТО ИЗ ССЫЛОК ===
-IMG_EXT_RE = re.compile(r'\.(jpg|jpeg|png|gif|webp)(\?.*)?$', re.IGNORECASE)
-IMGUR_ALBUM_RE = re.compile(r'imgur\.com/(a|gallery)/[a-zA-Z0-9]+', re.IGNORECASE)
-# Находим все прямые ссылки на i.imgur.com (включая thumbnail-версии с суффиксами h,m,l,d,b)
-IMGUR_DIRECT_RE = re.compile(r'https?://i\.imgur\.com/[a-zA-Z0-9]+[hmldb]?\.(?:jpg|jpeg|png|gif|webp)', re.IGNORECASE)
+IMG_EXT_RE = re.compile(r"\.(jpg|jpeg|png|gif|webp)(\?.*)?$", re.IGNORECASE)
 
 
-def _normalize_imgur_url(url: str) -> str:
-    """Убирает query-параметры и thumbnail-суффиксы из Imgur URL."""
-    # Убираем query-параметры
-    url = url.split('?')[0]
-    # Убираем суффиксы thumbnail: h, m, l, d, b в конце ID перед расширением
-    url = re.sub(r'([a-zA-Z0-9]+)[hmldb]\.(jpg|jpeg|png|gif|webp)$', r'\1.\2', url, flags=re.IGNORECASE)
-    return url
-
-
-async def extract_image_urls(text: str) -> list:
-    """Извлекает прямые URL изображений из текста или Imgur-альбома."""
-    raw_urls = re.split(r'[\s,]+', text.strip())
-    raw_urls = [u for u in raw_urls if u.startswith(('http://', 'https://'))]
-
-    result = []
-    for url in raw_urls:
-        # Если это прямая ссылка на изображение — добавляем как есть
-        if IMG_EXT_RE.search(url):
-            result.append(url)
-            continue
-
-        # Если это Imgur-альбом — парсим HTML
-        if IMGUR_ALBUM_RE.search(url):
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"}) as resp:
-                        if resp.status == 200:
-                            html = await resp.text()
-                            found = IMGUR_DIRECT_RE.findall(html)
-                            # Нормализуем: убираем thumbnail-суффиксы и параметры, оставляем уникальные
-                            normalized = set()
-                            for u in found:
-                                normalized.add(_normalize_imgur_url(u))
-                            if normalized:
-                                result.extend(sorted(normalized))
-                                continue
-            except Exception:
-                pass
-
-        result.append(url)
-
-    # Финальная дедупликация
+def extract_image_urls(text: str) -> list:
+    """Извлекает прямые URL изображений из текста (через пробел или запятую)."""
+    raw_urls = re.split(r"[\s,]+", text.strip())
+    raw_urls = [u.strip() for u in raw_urls if u.strip().startswith(("http://", "https://"))]
+    result = [u for u in raw_urls if IMG_EXT_RE.search(u)]
+    # Дедупликация по базовому URL (без query-параметров)
     seen = set()
     unique = []
     for u in result:
-        norm = _normalize_imgur_url(u)
-        if norm not in seen:
-            seen.add(norm)
+        base = u.split("?")[0]
+        if base not in seen:
+            seen.add(base)
             unique.append(u)
     return unique
+
+
+@router.message(EditFake.value, F.photo)
+async def fake_value_photo(message: Message, state: FSMContext):
+    """Обработка фото, отправленных напрямую при редактировании фейка."""
+    data = await state.get_data()
+    fake_id = data.get("edit_fake_id")
+    field = data.get("edit_field")
+
+    if not fake_id or field != "photo":
+        await state.clear()
+        return await message.answer(get_text("editfake_error", "ru"))
+
+    photo_id = message.photo[-1].file_id
+    current = db.get_photos(fake_id)
+    if not current:
+        db.delete_photos(fake_id)
+    db.add_photo(fake_id, photo_id, len(current))
+    await state.clear()
+    await message.answer(f"✅ Фото добавлено. Всего: {len(current) + 1} шт.")
+
+    fake = db.get_profile(fake_id)
+    if fake:
+        photos = fake.get("photos", [])
+        if len(photos) == 1:
+            await message.answer_photo(photo=photos[0], caption=format_card(fake, "ru"))
+        elif len(photos) > 1:
+            media = []
+            for i, url in enumerate(photos):
+                cap = format_card(fake, "ru") if i == 0 else ""
+                media.append(InputMediaPhoto(media=url, caption=cap))
+            await message.bot.send_media_group(chat_id=message.chat.id, media=media)
 
 
 @router.message(EditFake.value)
@@ -1384,22 +1377,32 @@ async def fake_value_set(message: Message, state: FSMContext):
             return await message.answer(get_text("enter_number", "ru"))
         value = int(value)
     elif field == "photo":
-        await message.answer("⏳ Загружаю фотографии...")
-        try:
-            image_urls = await extract_image_urls(value)
-            if not image_urls:
-                await state.clear()
-                return await message.answer("❌ Не удалось найти фотографии по ссылке. Попробуйте отправить прямые ссылки через запятую или пробел.")
-
-            db.delete_photos(fake_id)
-            for idx, img_url in enumerate(image_urls):
-                db.add_photo(fake_id, img_url, idx)
-
+        image_urls = extract_image_urls(value)
+        if not image_urls:
             await state.clear()
-            await message.answer(f"✅ Фотографии обновлены: {len(image_urls)} шт.")
-        except Exception as e:
-            await state.clear()
-            await message.answer(f"⚠️ Ошибка загрузки фото: {e}")
+            return await message.answer(
+                "❌ Не найдено прямых ссылок на фото. Попробуйте отправить прямые ссылки через запятую или пробел. "
+                "Пример: https://files.catbox.moe/abc.jpg https://files.catbox.moe/xyz.jpg"
+            )
+
+        db.delete_photos(fake_id)
+        for idx, img_url in enumerate(image_urls):
+            db.add_photo(fake_id, img_url, idx)
+
+        await state.clear()
+        await message.answer(f"✅ Фотографии обновлены: {len(image_urls)} шт.")
+
+        fake = db.get_profile(fake_id)
+        if fake:
+            photos = fake.get("photos", [])
+            if len(photos) == 1:
+                await message.answer_photo(photo=photos[0], caption=format_card(fake, "ru"))
+            elif len(photos) > 1:
+                media = []
+                for i, url in enumerate(photos):
+                    cap = format_card(fake, "ru") if i == 0 else ""
+                    media.append(InputMediaPhoto(media=url, caption=cap))
+                await message.bot.send_media_group(chat_id=message.chat.id, media=media)
         return
 
     if field == "interests":
@@ -1421,7 +1424,6 @@ async def fake_value_set(message: Message, state: FSMContext):
                 cap = format_card(fake, "ru") if i == 0 else ""
                 media.append(InputMediaPhoto(media=url, caption=cap))
             await message.bot.send_media_group(chat_id=message.chat.id, media=media)
-
 
 @router.callback_query(F.data.startswith("fakedel_"), EditFake.field)
 async def cb_fake_delete(callback: CallbackQuery, state: FSMContext):
