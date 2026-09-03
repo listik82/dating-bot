@@ -108,7 +108,7 @@ async def get_city_from_coords(lat: float, lon: float) -> str:
 
 def format_card(p: dict, lang: str) -> str:
     status = get_online_status(p.get("last_active", ""), lang)
-    fake_badge = " 🎭" if p.get("is_fake") else ""
+    fake_badge = ""
     dist = ""
     if p.get("distance_km"):
         dist = get_text("distance", lang, dist=p["distance_km"]) + "\n"
