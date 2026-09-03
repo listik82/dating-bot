@@ -1311,7 +1311,17 @@ async def cb_fake_field(callback: CallbackQuery, state: FSMContext):
 # === ПАРСИНГ ФОТО ИЗ ССЫЛОК ===
 IMG_EXT_RE = re.compile(r'\.(jpg|jpeg|png|gif|webp)(\?.*)?$', re.IGNORECASE)
 IMGUR_ALBUM_RE = re.compile(r'imgur\.com/(a|gallery)/[a-zA-Z0-9]+', re.IGNORECASE)
-IMGUR_DIRECT_RE = re.compile(r'https?://i\.imgur\.com/[a-zA-Z0-9]+\.(?:jpg|jpeg|png|gif|webp)', re.IGNORECASE)
+# Находим все прямые ссылки на i.imgur.com (включая thumbnail-версии с суффиксами h,m,l,d,b)
+IMGUR_DIRECT_RE = re.compile(r'https?://i\.imgur\.com/[a-zA-Z0-9]+[hmldb]?\.(?:jpg|jpeg|png|gif|webp)', re.IGNORECASE)
+
+
+def _normalize_imgur_url(url: str) -> str:
+    """Убирает query-параметры и thumbnail-суффиксы из Imgur URL."""
+    # Убираем query-параметры
+    url = url.split('?')[0]
+    # Убираем суффиксы thumbnail: h, m, l, d, b в конце ID перед расширением
+    url = re.sub(r'([a-zA-Z0-9]+)[hmldb]\.(jpg|jpeg|png|gif|webp)$', r'\1.\2', url, flags=re.IGNORECASE)
+    return url
 
 
 async def extract_image_urls(text: str) -> list:
@@ -1321,30 +1331,38 @@ async def extract_image_urls(text: str) -> list:
 
     result = []
     for url in raw_urls:
+        # Если это прямая ссылка на изображение — добавляем как есть
         if IMG_EXT_RE.search(url):
             result.append(url)
             continue
 
+        # Если это Imgur-альбом — парсим HTML
         if IMGUR_ALBUM_RE.search(url):
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"}) as resp:
                         if resp.status == 200:
                             html = await resp.text()
-                            found = set(IMGUR_DIRECT_RE.findall(html))
-                            if found:
-                                result.extend(sorted(found))
+                            found = IMGUR_DIRECT_RE.findall(html)
+                            # Нормализуем: убираем thumbnail-суффиксы и параметры, оставляем уникальные
+                            normalized = set()
+                            for u in found:
+                                normalized.add(_normalize_imgur_url(u))
+                            if normalized:
+                                result.extend(sorted(normalized))
                                 continue
             except Exception:
                 pass
 
         result.append(url)
 
+    # Финальная дедупликация
     seen = set()
     unique = []
     for u in result:
-        if u not in seen:
-            seen.add(u)
+        norm = _normalize_imgur_url(u)
+        if norm not in seen:
+            seen.add(norm)
             unique.append(u)
     return unique
 
