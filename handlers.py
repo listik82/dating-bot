@@ -13,6 +13,43 @@ from telethon import TelegramClient
 
 import database as db
 from keyboards import *
+
+# === ОТПРАВКА ФОТО ПРОФИЛЯ ===
+async def send_profile_photos(target, profile: dict, lang: str = "ru"):
+    """Отправляет фото профиля: media_group если все рабочие, иначе по одному."""
+    photos = profile.get("photos", [])
+    if not photos:
+        return await target.answer(format_card(profile, lang))
+
+    # Пробуем media_group (красивый альбом)
+    try:
+        if len(photos) == 1:
+            return await target.answer_photo(photo=photos[0], caption=format_card(profile, lang))
+        media = []
+        for i, p in enumerate(photos):
+            cap = format_card(profile, lang) if i == 0 else ""
+            media.append(InputMediaPhoto(media=p, caption=cap))
+        if hasattr(target, 'bot'):
+            return await target.bot.send_media_group(chat_id=target.chat.id, media=media)
+        else:
+            return await target.send_media_group(chat_id=target.chat.id, media=media)
+    except Exception:
+        pass  # Падаем на отправку по одному
+
+    # Отправляем по одному с try/except
+    for i, p in enumerate(photos):
+        try:
+            if i == 0:
+                await target.answer_photo(photo=p, caption=format_card(profile, lang))
+            else:
+                await target.answer_photo(photo=p)
+        except Exception as e:
+            logging.error(f"Ошибка отправки фото {p}: {e}")
+            if i == 0:
+                await target.answer(format_card(profile, lang))
+
+
+
 from fake_generator import get_online_status
 from locales import get_text
 from config import ADMIN_ID, VERIFICATION_REQUIRED, VERIFICATION_AFTER_LIKES, API_ID, API_HASH
@@ -1262,20 +1299,7 @@ async def cb_fake_edit_choose(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logging.debug(f"Не удалось удалить сообщение: {e}")
 
-    photos = fake.get("photos", [])
-    if photos:
-        for i, p in enumerate(photos):
-            try:
-                if i == 0:
-                    await callback.message.answer_photo(photo=p, caption=format_card(fake, "ru"))
-                else:
-                    await callback.message.answer_photo(photo=p)
-            except Exception as e:
-                logging.error(f"Ошибка отправки фото {p} фейка {fake_id}: {e}")
-                if i == 0:
-                    await callback.message.answer(format_card(fake, "ru"))
-    else:
-        await callback.message.answer(format_card(fake, "ru"))
+    await send_profile_photos(callback.message, fake, "ru")
 
     await callback.message.answer(
         get_text("fake_edit_field", "ru", name=fake["name"]),
@@ -1330,27 +1354,14 @@ async def cb_fake_photo_done(callback: CallbackQuery, state: FSMContext):
     await callback.message.delete()
 
     if fake:
-        photos = fake.get("photos", [])
-        count = len(photos)
+        count = len(fake.get("photos", []))
         await callback.message.answer(f"✅ Фото обновлено: {count} шт.")
-
-        if photos:
-            for i, p in enumerate(photos):
-                try:
-                    if i == 0:
-                        await callback.message.answer_photo(photo=p, caption=format_card(fake, "ru"))
-                    else:
-                        await callback.message.answer_photo(photo=p)
-                except Exception as e:
-                    logging.error(f"Ошибка отправки фото {p}: {e}")
-                    if i == 0:
-                        await callback.message.answer(format_card(fake, "ru"))
-        else:
-            await callback.message.answer(format_card(fake, "ru"))
+        await send_profile_photos(callback.message, fake, "ru")
     else:
         await callback.message.answer(get_text("fake_not_found", "ru"))
 
     await callback.answer()
+
 
 
 
@@ -1410,20 +1421,7 @@ async def fake_value_photo(message: Message, state: FSMContext):
     # Показываем обновлённую анкету
     fake = db.get_profile(fake_id)
     if fake:
-        photos = fake.get("photos", [])
-        if photos:
-            for i, p in enumerate(photos):
-                try:
-                    if i == 0:
-                        await message.answer_photo(photo=p, caption=format_card(fake, "ru"))
-                    else:
-                        await message.answer_photo(photo=p)
-                except Exception as e:
-                    logging.error(f"Ошибка отправки фото {p}: {e}")
-                    if i == 0:
-                        await message.answer(format_card(fake, "ru"))
-        else:
-            await message.answer(format_card(fake, "ru"))
+        await send_profile_photos(message, fake, "ru")
 
 
 @router.message(EditFake.value)
@@ -1460,20 +1458,7 @@ async def fake_value_set(message: Message, state: FSMContext):
 
         fake = db.get_profile(fake_id)
         if fake:
-            photos = fake.get("photos", [])
-            if photos:
-                for i, p in enumerate(photos):
-                    try:
-                        if i == 0:
-                            await message.answer_photo(photo=p, caption=format_card(fake, "ru"))
-                        else:
-                            await message.answer_photo(photo=p)
-                    except Exception as e:
-                        logging.error(f"Ошибка показа фото после обновления: {e}")
-                        if i == 0:
-                            await message.answer(format_card(fake, "ru"))
-            else:
-                await message.answer(format_card(fake, "ru"))
+            await send_profile_photos(message, fake, "ru")
         return
 
     if field == "interests":
@@ -1486,20 +1471,7 @@ async def fake_value_set(message: Message, state: FSMContext):
 
     fake = db.get_profile(fake_id)
     if fake:
-        photos = fake.get("photos", [])
-        if photos:
-            for i, p in enumerate(photos):
-                try:
-                    if i == 0:
-                        await message.answer_photo(photo=p, caption=format_card(fake, "ru"))
-                    else:
-                        await message.answer_photo(photo=p)
-                except Exception as e:
-                    logging.error(f"Ошибка показа фото после обновления: {e}")
-                    if i == 0:
-                        await message.answer(format_card(fake, "ru"))
-        else:
-            await message.answer(format_card(fake, "ru"))
+        await send_profile_photos(message, fake, "ru")
 
 @router.callback_query(F.data.startswith("fakedel_"), EditFake.field)
 async def cb_fake_delete(callback: CallbackQuery, state: FSMContext):
