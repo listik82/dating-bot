@@ -7,6 +7,7 @@ import aiohttp
 import os
 import logging
 import traceback
+import re
 
 from telethon import TelegramClient
 
@@ -1306,6 +1307,48 @@ async def cb_fake_field(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+
+# === ПАРСИНГ ФОТО ИЗ ССЫЛОК ===
+IMG_EXT_RE = re.compile(r'\.(jpg|jpeg|png|gif|webp)(\?.*)?$', re.IGNORECASE)
+IMGUR_ALBUM_RE = re.compile(r'imgur\.com/(a|gallery)/[a-zA-Z0-9]+', re.IGNORECASE)
+IMGUR_DIRECT_RE = re.compile(r'https?://i\.imgur\.com/[a-zA-Z0-9]+\.(?:jpg|jpeg|png|gif|webp)', re.IGNORECASE)
+
+
+async def extract_image_urls(text: str) -> list:
+    """Извлекает прямые URL изображений из текста или Imgur-альбома."""
+    raw_urls = re.split(r'[\s,]+', text.strip())
+    raw_urls = [u for u in raw_urls if u.startswith(('http://', 'https://'))]
+
+    result = []
+    for url in raw_urls:
+        if IMG_EXT_RE.search(url):
+            result.append(url)
+            continue
+
+        if IMGUR_ALBUM_RE.search(url):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"}) as resp:
+                        if resp.status == 200:
+                            html = await resp.text()
+                            found = set(IMGUR_DIRECT_RE.findall(html))
+                            if found:
+                                result.extend(sorted(found))
+                                continue
+            except Exception:
+                pass
+
+        result.append(url)
+
+    seen = set()
+    unique = []
+    for u in result:
+        if u not in seen:
+            seen.add(u)
+            unique.append(u)
+    return unique
+
+
 @router.message(EditFake.value)
 async def fake_value_set(message: Message, state: FSMContext):
     data = await state.get_data()
@@ -1323,9 +1366,22 @@ async def fake_value_set(message: Message, state: FSMContext):
             return await message.answer(get_text("enter_number", "ru"))
         value = int(value)
     elif field == "photo":
-        db.add_photo(fake_id, value, 999)
-        await state.clear()
-        await message.answer(get_text("fake_photo_added", "ru"))
+        await message.answer("⏳ Загружаю фотографии...")
+        try:
+            image_urls = await extract_image_urls(value)
+            if not image_urls:
+                await state.clear()
+                return await message.answer("❌ Не удалось найти фотографии по ссылке. Попробуйте отправить прямые ссылки через запятую или пробел.")
+
+            db.delete_photos(fake_id)
+            for idx, img_url in enumerate(image_urls):
+                db.add_photo(fake_id, img_url, idx)
+
+            await state.clear()
+            await message.answer(f"✅ Фотографии обновлены: {len(image_urls)} шт.")
+        except Exception as e:
+            await state.clear()
+            await message.answer(f"⚠️ Ошибка загрузки фото: {e}")
         return
 
     if field == "interests":
