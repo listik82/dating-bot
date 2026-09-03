@@ -1259,23 +1259,21 @@ async def cb_fake_edit_choose(callback: CallbackQuery, state: FSMContext):
 
     try:
         await callback.message.delete()
-    except:
-        pass
+    except Exception as e:
+        logging.debug(f"Не удалось удалить сообщение: {e}")
 
     photos = fake.get("photos", [])
     if photos:
-        try:
-            if len(photos) == 1:
-                await callback.message.answer_photo(photo=photos[0], caption=format_card(fake, "ru"))
-            elif len(photos) > 1:
-                media = []
-                for i, url in enumerate(photos):
-                    cap = format_card(fake, "ru") if i == 0 else ""
-                    media.append(InputMediaPhoto(media=url, caption=cap))
-                await callback.message.bot.send_media_group(chat_id=callback.message.chat.id, media=media)
-        except Exception as e:
-            logging.error(f"Ошибка отправки фото фейка {fake_id}: {e}")
-            await callback.message.answer(format_card(fake, "ru"))
+        for i, p in enumerate(photos):
+            try:
+                if i == 0:
+                    await callback.message.answer_photo(photo=p, caption=format_card(fake, "ru"))
+                else:
+                    await callback.message.answer_photo(photo=p)
+            except Exception as e:
+                logging.error(f"Ошибка отправки фото {p} фейка {fake_id}: {e}")
+                if i == 0:
+                    await callback.message.answer(format_card(fake, "ru"))
     else:
         await callback.message.answer(format_card(fake, "ru"))
 
@@ -1347,31 +1345,25 @@ async def fake_value_photo(message: Message, state: FSMContext):
         return await message.answer(get_text("editfake_error", "ru"))
 
     photo_id = message.photo[-1].file_id
-    current = db.get_photos(fake_id)
-    if not current:
-        db.delete_photos(fake_id)
-    db.add_photo(fake_id, photo_id, len(current))
+
+    # Удаляем старые фото и добавляем новое (замена, а не добавление)
+    db.delete_photos(fake_id)
+    db.add_photo(fake_id, photo_id, 0)
+
     await state.clear()
-    await message.answer(f"✅ Фото добавлено. Всего: {len(current) + 1} шт.")
+    await message.answer("✅ Фото обновлено.")
 
     fake = db.get_profile(fake_id)
     if fake:
         photos = fake.get("photos", [])
-        if photos:
+        for i, p in enumerate(photos):
             try:
-                if len(photos) == 1:
-                    await message.answer_photo(photo=photos[0], caption=format_card(fake, "ru"))
-                elif len(photos) > 1:
-                    media = []
-                    for i, url in enumerate(photos):
-                        cap = format_card(fake, "ru") if i == 0 else ""
-                        media.append(InputMediaPhoto(media=url, caption=cap))
-                    await message.bot.send_media_group(chat_id=message.chat.id, media=media)
+                if i == 0:
+                    await message.answer_photo(photo=p, caption=format_card(fake, "ru"))
+                else:
+                    await message.answer_photo(photo=p)
             except Exception as e:
-                logging.error(f"Ошибка показа фото после обновления: {e}")
-                await message.answer(format_card(fake, "ru"))
-        else:
-            await message.answer(format_card(fake, "ru"))
+                logging.error(f"Ошибка отправки фото {p}: {e}")
 
 
 @router.message(EditFake.value)
@@ -1410,18 +1402,16 @@ async def fake_value_set(message: Message, state: FSMContext):
         if fake:
             photos = fake.get("photos", [])
             if photos:
-                try:
-                    if len(photos) == 1:
-                        await message.answer_photo(photo=photos[0], caption=format_card(fake, "ru"))
-                    elif len(photos) > 1:
-                        media = []
-                        for i, url in enumerate(photos):
-                            cap = format_card(fake, "ru") if i == 0 else ""
-                            media.append(InputMediaPhoto(media=url, caption=cap))
-                        await message.bot.send_media_group(chat_id=message.chat.id, media=media)
-                except Exception as e:
-                    logging.error(f"Ошибка показа фото после обновления: {e}")
-                    await message.answer(format_card(fake, "ru"))
+                for i, p in enumerate(photos):
+                    try:
+                        if i == 0:
+                            await message.answer_photo(photo=p, caption=format_card(fake, "ru"))
+                        else:
+                            await message.answer_photo(photo=p)
+                    except Exception as e:
+                        logging.error(f"Ошибка показа фото после обновления: {e}")
+                        if i == 0:
+                            await message.answer(format_card(fake, "ru"))
             else:
                 await message.answer(format_card(fake, "ru"))
         return
@@ -1438,18 +1428,16 @@ async def fake_value_set(message: Message, state: FSMContext):
     if fake:
         photos = fake.get("photos", [])
         if photos:
-            try:
-                if len(photos) == 1:
-                    await message.answer_photo(photo=photos[0], caption=format_card(fake, "ru"))
-                elif len(photos) > 1:
-                    media = []
-                    for i, url in enumerate(photos):
-                        cap = format_card(fake, "ru") if i == 0 else ""
-                        media.append(InputMediaPhoto(media=url, caption=cap))
-                    await message.bot.send_media_group(chat_id=message.chat.id, media=media)
-            except Exception as e:
-                logging.error(f"Ошибка показа фото после обновления: {e}")
-                await message.answer(format_card(fake, "ru"))
+            for i, p in enumerate(photos):
+                try:
+                    if i == 0:
+                        await message.answer_photo(photo=p, caption=format_card(fake, "ru"))
+                    else:
+                        await message.answer_photo(photo=p)
+                except Exception as e:
+                    logging.error(f"Ошибка показа фото после обновления: {e}")
+                    if i == 0:
+                        await message.answer(format_card(fake, "ru"))
         else:
             await message.answer(format_card(fake, "ru"))
 
