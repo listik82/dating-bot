@@ -547,7 +547,7 @@ async def reg_bio(message: Message, state: FSMContext):
 async def cb_interest(callback: CallbackQuery, state: FSMContext):
     lang = db.get_lang(callback.from_user.id)
     data = await state.get_data()
-    selected = data.get("selected_interests", set())
+    selected = set(data.get("selected_interests", []))
     idx = int(callback.data.split("_")[1])
     items = INTERESTS.get(lang, INTERESTS["ru"])
     item = items[idx]
@@ -557,7 +557,7 @@ async def cb_interest(callback: CallbackQuery, state: FSMContext):
     else:
         selected.add(item)
 
-    await state.update_data(selected_interests=selected)
+    await state.update_data(selected_interests=list(selected))
     await callback.message.edit_reply_markup(reply_markup=interests_kb(lang, selected))
     await callback.answer()
 
@@ -566,7 +566,7 @@ async def cb_interest(callback: CallbackQuery, state: FSMContext):
 async def cb_interests_done(callback: CallbackQuery, state: FSMContext):
     lang = db.get_lang(callback.from_user.id)
     data = await state.get_data()
-    selected = data.get("selected_interests", set())
+    selected = data.get("selected_interests", [])
     interests_str = ", ".join(selected) if selected else ""
     await state.update_data(interests=interests_str)
     await callback.message.edit_text(get_text("reg_photo_hint", lang))
