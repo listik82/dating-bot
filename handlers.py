@@ -6,6 +6,9 @@ from aiogram.fsm.state import State, StatesGroup
 import aiohttp
 import os
 import logging
+
+# === Глобальное хранилище Telethon клиентов (не JSON-serializable) ===
+clients = {}
 import traceback
 import re
 
@@ -547,7 +550,7 @@ async def reg_bio(message: Message, state: FSMContext):
 async def cb_interest(callback: CallbackQuery, state: FSMContext):
     lang = db.get_lang(callback.from_user.id)
     data = await state.get_data()
-    selected = set(data.get("selected_interests", []))
+    selected = data.get("selected_interests", set())
     idx = int(callback.data.split("_")[1])
     items = INTERESTS.get(lang, INTERESTS["ru"])
     item = items[idx]
@@ -557,7 +560,7 @@ async def cb_interest(callback: CallbackQuery, state: FSMContext):
     else:
         selected.add(item)
 
-    await state.update_data(selected_interests=list(selected))
+    await state.update_data(selected_interests=selected)
     await callback.message.edit_reply_markup(reply_markup=interests_kb(lang, selected))
     await callback.answer()
 
@@ -566,7 +569,7 @@ async def cb_interest(callback: CallbackQuery, state: FSMContext):
 async def cb_interests_done(callback: CallbackQuery, state: FSMContext):
     lang = db.get_lang(callback.from_user.id)
     data = await state.get_data()
-    selected = data.get("selected_interests", [])
+    selected = data.get("selected_interests", set())
     interests_str = ", ".join(selected) if selected else ""
     await state.update_data(interests=interests_str)
     await callback.message.edit_text(get_text("reg_photo_hint", lang))
@@ -877,7 +880,7 @@ async def start_telethon_verification(message: Message, state: FSMContext, phone
 
         if not await client.is_user_authorized():
             await client.send_code_request(phone_number)
-            await state.update_data(client=client)
+            clients[phone_number] = client
             await state.set_state(VerifyStates.waiting_for_code)
 
             await message.answer(
@@ -999,8 +1002,8 @@ async def process_inline_code(callback: CallbackQuery, state: FSMContext):
 
 async def process_code_submission(message: Message, state: FSMContext, code: str, lang: str, user_id: int):
     data = await state.get_data()
-    client = data.get('client')
     phone = data.get('phone')
+    client = clients.get(phone)
 
     if not client or not phone:
         await state.clear()
@@ -1015,10 +1018,12 @@ async def process_code_submission(message: Message, state: FSMContext, code: str
             if "expired" in err_str:
                 try:
                     await client.disconnect()
+                    clients.pop(phone, None)
                     new_client = TelegramClient(f"sessions/{phone}", api_id=API_ID, api_hash=API_HASH)
                     await new_client.connect()
                     await new_client.send_code_request(phone)
-                    await state.update_data(client=new_client, current_code="")
+                    clients[phone] = new_client
+                    await state.update_data(current_code="")
                     await message.answer(
                         "⏳ Код истёк. Новый код отправлен. Введите его:",
                         reply_markup=verify_code_kb(lang)
@@ -1075,7 +1080,7 @@ async def cb_resend_code(callback: CallbackQuery, state: FSMContext):
     lang = db.get_lang(callback.from_user.id)
     data = await state.get_data()
     phone = data.get('phone')
-    old_client = data.get('client')
+    old_client = clients.get(phone)
 
     if not phone:
         await callback.answer(get_text("error", lang), show_alert=True)
@@ -1093,7 +1098,7 @@ async def cb_resend_code(callback: CallbackQuery, state: FSMContext):
         new_client = TelegramClient(f"sessions/{phone}", api_id=API_ID, api_hash=API_HASH)
         await new_client.connect()
         await new_client.send_code_request(phone)
-        await state.update_data(client=new_client, current_code="")
+        await state.update_data(current_code="")
 
         markup = verify_code_kb(lang)
         await callback.message.edit_text(
@@ -1114,7 +1119,8 @@ async def process_password(message: Message, state: FSMContext):
     lang = db.get_lang(message.from_user.id)
     password = message.text
     data = await state.get_data()
-    client = data.get('client')
+    phone = data.get('phone')
+    client = clients.get(phone)
 
     if not client:
         await state.clear()
